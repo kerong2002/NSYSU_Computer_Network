@@ -155,7 +155,7 @@ void udp_msg_sender(int fd, struct sockaddr* dst)
 
 void *tcp_socket(void *argu) {
     // Sleep for 2 seconds (you can adjust or remove this if not needed)
-    sleep(2);
+    sleep(1);
 
     int server_fd, client_socket;
     struct sockaddr_in address;

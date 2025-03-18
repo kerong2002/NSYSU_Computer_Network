@@ -59,7 +59,7 @@ typedef struct Packet
 }Packet;
 
 void *tcp_socket(void *argu) {
-    sleep(2); // Delay to synchronize connections
+    sleep(1); // Delay to synchronize connections
     
     int server_fd, client_fd;
     struct sockaddr_in router_addr, server_addr;
