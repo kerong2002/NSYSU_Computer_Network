@@ -93,9 +93,9 @@ void tcp_msg_sender(int fd, struct sockaddr* dst){
     }
     strncpy(last_payload, payload, 5000); // 保存本次傳輸的 payload 以供下次使用
     size_t payload_length = strlen(payload);
-
-    char buffer[PACKET_SIZE] = {0};
-
+	
+    char buffer[PACKET_SIZE] = {0}; 
+    
     struct MACHeader macHeader;
     uint8_t des_mac[6] = {0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
     uint8_t sour_mac[6] = {0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
@@ -116,14 +116,14 @@ void tcp_msg_sender(int fd, struct sockaddr* dst){
     uint16_t header_checksum = 0x0000;
     //uint32_t options=0x0000;
     const char*source_ip_str = "10.17.164.10"; // source IP address
-    const char* destination_ip_str ="10.17.89.69";//(rand() % 2 == 0) ? "10.27.79.68" : "10.17.89.69";
-
-
-
+    const char* destination_ip_str ="10.17.89.69";//(rand() % 2 == 0) ? "10.27.79.68" : "10.17.89.69"; 
+    
+    
+    
     // 轉換 IP address為二進制形式
     inet_pton(AF_INET, source_ip_str, &ipHeader.source_ip);
     inet_pton(AF_INET, destination_ip_str, &ipHeader.destination_ip);
-
+    
 
     ipHeader.version_ihl = version_ihl;
     ipHeader.type_of_service = type_of_service;
@@ -137,7 +137,7 @@ void tcp_msg_sender(int fd, struct sockaddr* dst){
 
     struct TCPHeader tcpHeader;
     uint16_t source_port = 12345; // Source port
-    uint16_t destination_port = 80; // Destination port
+    uint16_t destination_port = 80; // Destination port 
     uint32_t sequence_number = 0x00000001; // Sequence
     uint32_t ack_number = 0x12345678; // Ack
     uint8_t offset_reserved_flags = 0x14;
@@ -153,7 +153,7 @@ void tcp_msg_sender(int fd, struct sockaddr* dst){
     tcpHeader.window_size = htons(window_size);
     tcpHeader.checksum = htons(checksum);
     tcpHeader.urgent_pointer = htons(urgent_pointer);
-
+    
     // 將 MAC header 、IP header 和 TCP header複製到buffer
     buffer[PACKET_SIZE] = {0};
     memcpy(buffer, &macHeader, sizeof(MACHeader));
@@ -204,11 +204,54 @@ void rcv_UDPpacket(int fd){
     	printf("end");
 }
 
+void print_serv_addr(struct sockaddr_in serv_addr) {
+    char ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &(serv_addr.sin_addr), ip, INET_ADDRSTRLEN);
+    printf("IP: %s\n", ip);
+    printf("Port: %d\n", ntohs(serv_addr.sin_port));
+}
 
 void *tcp_socket(void *argu)
 {
 	//code
-	return 0;
+	sleep(2);
+	int cnt = 0;
+    int server_fd;
+    struct sockaddr_in serv_addr;
+
+    // Create Socket
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("Socket creation error.");
+        exit(EXIT_FAILURE);
+    }
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(ROUTER_PORT); 
+
+    // change ip address(Internet Presentation to Numeric)
+    if (inet_pton(AF_INET, SERVER_IP, &serv_addr.sin_addr) <= 0) {
+        perror("Invalid address / Address not supported");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Try to connect Server
+    if (connect(server_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        perror("Connection Failed");
+        close(server_fd);
+        pthread_exit(NULL);
+    }
+
+    print_serv_addr(serv_addr);
+
+    while (cnt < 10) {
+        tcp_msg_sender(server_fd, (struct sockaddr*)&serv_addr);
+        cnt++;
+        sleep(1);
+    }
+
+    close(server_fd);
+    return NULL;
 }
 
 void *udp_socket(void *argu) {
@@ -247,7 +290,7 @@ int main(){
 
     pthread_create(&tcp_thread, NULL, &tcp_socket, NULL);
 	pthread_create(&udp_thread, NULL, &udp_socket, NULL);
-//	pthread_join(tcp_thread, NULL);
+	pthread_join(tcp_thread, NULL);
 	pthread_join(udp_thread, NULL);
 
 	return 0;

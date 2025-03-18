@@ -59,8 +59,91 @@ typedef struct Packet
 }Packet;
 
 void *tcp_socket(void *argu) {
-	//code
-	return NULL;
+    sleep(2); // Delay to synchronize connections
+    
+    int server_fd, client_fd;
+    struct sockaddr_in router_addr, server_addr;
+    socklen_t addr_len = sizeof(router_addr);
+    char buffer[PACKET_SIZE] = {0};
+    int count = 0;
+    
+    // Create a TCP socket
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Configure router address settings
+    router_addr.sin_family = AF_INET;
+    router_addr.sin_addr.s_addr = INADDR_ANY;
+    router_addr.sin_port = htons(ROUTER_PORT);
+
+    // Bind the socket to the router address
+    if (bind(server_fd, (struct sockaddr *)&router_addr, sizeof(router_addr)) < 0) {
+        perror("Bind failed");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Listen for incoming connections
+    if (listen(server_fd, 10) < 0) {
+        perror("Listen failed");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Accept an incoming connection
+    client_fd = accept(server_fd, (struct sockaddr *)&router_addr, &addr_len);
+    if (client_fd < 0) {
+        perror("Accept failed");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Create a new socket to connect to the main server
+    int server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sock < 0) {
+        perror("Failed to create server socket");
+        close(client_fd);
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Set up the server address structure
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(SERVER_PORT);
+    if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) {
+        perror("Invalid server IP address");
+        close(server_sock);
+        close(client_fd);
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Connect to the main server
+    if (connect(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Failed to connect to server");
+        close(server_sock);
+        close(client_fd);
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Receive and forward data
+    while (count < 10) {
+        ssize_t bytes_received = read(client_fd, buffer, PACKET_SIZE);
+        if (bytes_received > 0) {
+            send(server_sock, buffer, bytes_received, 0); // Forward data to server
+        }
+        count++;
+    }
+
+    // Close sockets
+    close(server_sock);
+    close(client_fd);
+    close(server_fd);
+    return NULL;
 }
 
 void *udp_socket(void *argu) {
@@ -169,7 +252,7 @@ int main() {
 
     pthread_create(&tcp_thread, NULL, &tcp_socket, NULL);
 	pthread_create(&udp_thread, NULL, &udp_socket, NULL);
-//	pthread_join(tcp_thread, NULL);
+	pthread_join(tcp_thread, NULL);
 	pthread_join(udp_thread, NULL);
 	return 0;
 }

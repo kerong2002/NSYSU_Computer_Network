@@ -31,6 +31,7 @@ using namespace std;
 #define CLIENTTWO_PORT 9004
 #define SA struct sockaddr
 
+
 typedef struct IPHeader{
     uint8_t version_ihl;
     uint8_t type_of_service;
@@ -43,7 +44,7 @@ typedef struct IPHeader{
     uint32_t source_ip;
     uint32_t destination_ip;
     uint32_t options;
-
+    
 }IPHeader;
 
 typedef struct UDPHeader
@@ -52,22 +53,33 @@ typedef struct UDPHeader
            dest_port:16;
   uint32_t Segment_Length:16,
            Checksum:16;
-}UDPHeader;
+}UDPHeader; //8bytes
 
 typedef struct MACHeader{
-    uint8_t sour_mac[6];       // source
-    uint8_t des_mac[6];        // destination
-    uint16_t fram_typ;         // frame type
-    uint32_t crc;              // crc
+    uint8_t sour_mac[6];        // source
+    uint8_t des_mac[6];         // destination
+    uint16_t fram_typ;        // frame type
+    uint32_t crc;             // crc
 }MACHeader; //18bytes
+
+typedef struct TCPHeader {
+    uint16_t source_port;
+    uint16_t destination_port;
+    uint32_t sequence_number;
+    uint32_t ack_number;
+    uint16_t offset_reserved_flags;
+    uint16_t window_size;
+    uint16_t checksum;
+    uint16_t urgent_pointer;
+}TCPHeader; //20bytes
 
 typedef struct Packet
 {
   struct IPHeader ipheader;
   struct UDPHeader udpheader;
   struct MACHeader macheader;
-  char buffer[MTU - 40];
-}Packet;
+  char buffer[PACKET_SIZE - 46];
+}Packet;  //UDP Packet
 
 int count = 0;
 
@@ -141,15 +153,84 @@ void udp_msg_sender(int fd, struct sockaddr* dst)
     }
 }
 
-void *tcp_socket(void *argu){
-	//code
-	return NULL;
+void *tcp_socket(void *argu) {
+    // Sleep for 2 seconds (you can adjust or remove this if not needed)
+    sleep(2);
+
+    int server_fd, client_socket;
+    struct sockaddr_in address;
+    int addrlen = sizeof(address);
+    char buffer[PACKET_SIZE] = {0};
+
+    // Create TCP socket
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("Socket creation error");
+        exit(EXIT_FAILURE);
+    }
+
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(SERVER_PORT);
+
+    // Bind socket to port
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("Bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Listen for incoming connections
+    if (listen(server_fd, 10) < 0) {
+        perror("Listen failed");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("TCP server listening on port %d ...\n", SERVER_PORT);
+
+    // Accept client connection
+    if ((client_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
+        perror("Accept failed");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Client connected\n");
+
+    int count = 0;
+
+    // Read data
+    while (count < 10) {
+        memset(buffer, 0, PACKET_SIZE);
+        int valread = read(client_socket, buffer, PACKET_SIZE);
+        if (valread <= 0) {
+            printf("Client disconnected\n");
+            break;
+        }
+
+        printf("-----Server receive-----\n");
+        size_t header_size = sizeof(MACHeader) + sizeof(IPHeader) + sizeof(TCPHeader);
+        char *payload = buffer + header_size;
+        //printf("%ld, %d\n", header_size, PACKET_SIZE);
+        printf("Received payload: ");
+        for (int i = 60; i < 64; i++) {
+            cout << buffer[i] << "";
+        }
+        printf("\n");
+
+        // Increment the packet count
+        count++;
+    }
+
+    // Close sockets
+    close(client_socket);
+    close(server_fd);
+
+    return NULL;
 }
+
 
 void *udp_socket(void *argu)
 {
 	//code
-    sleep(2);
+    sleep(4);
     int server_fd;               // server file descriptor
     struct sockaddr_in ser_addr; // server IP & port
 
@@ -180,7 +261,7 @@ int main()
 
     pthread_create(&tcp_thread, NULL, &tcp_socket, NULL);
 	pthread_create(&udp_thread, NULL, &udp_socket, NULL);
-//	pthread_join(tcp_thread, NULL);
+	pthread_join(tcp_thread, NULL);
 	pthread_join(udp_thread, NULL);
 	return 0;
 }
