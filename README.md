@@ -30,18 +30,51 @@ nano start_tmux.sh
 ```bash
 #!/bin/bash
 
-# 刪除現有會話，如果有的話
+# 函式：根據端口檢查並終止進程
+kill_process_by_port() {
+    PORT=$1  # 接收端口號作為參數
+    PID=$(lsof -t -i:$PORT)  # 使用 lsof 查找指定端口的進程ID
+    if [ ! -z "$PID" ]; then  # 如果找到進程ID
+        echo "Killing process on port $PORT (PID: $PID)..."
+        kill -9 $PID  # 強制終止該進程
+    else
+        echo "No process found on port $PORT."
+    fi
+}
+
+# 關閉指定端口（9000、9002、9003、9004）上的進程
+kill_process_by_port 9000
+kill_process_by_port 9002
+kill_process_by_port 9003
+kill_process_by_port 9004
+
+# 終止現有的 tmux 會話（如果有），避免重複創建
 tmux kill-session -t mysession 2>/dev/null
 
-# 創建一個新的 tmux 會話，並分割視窗
-tmux new-session -d -s mysession \
-    'bash' \; \
-    split-window -h \; \
-    split-window -v \; \
-    send-keys -t 0 './client' C-m \; \
-    send-keys -t 1 './server' C-m \; \
-    send-keys -t 2 './router' C-m \; \
-    attach-session -t mysession
+# 創建一個新的 tmux 會話
+tmux new-session -d -s mysession
+
+# 設定 tmux 選項（快捷鍵前綴、啟用滑鼠支持）
+tmux set-option -g prefix C-a  # 設定 tmux 快捷鍵前綴為 Ctrl-a
+tmux bind-key C-a send-prefix  # 設定 Ctrl-a 為發送前綴的快捷鍵
+tmux set-option -g mouse on  # 啟用滑鼠支持
+
+# 第一個水平分割
+tmux send-keys 'bash' C-m  # 在第一個窗格執行 bash
+tmux split-window -h  # 將視窗分割為左右兩個窗格
+
+# 在左側窗格中進行第二次水平分割
+tmux select-pane -t 0  # 選擇左側窗格（第0個）
+tmux split-window -h  # 進一步將左側窗格分割為兩個
+
+# 在不同的窗格中執行 client、server 和 router
+tmux send-keys -t 0 './server' C-m  # 在第一個窗格執行 server
+tmux send-keys -t 1 './router' C-m  # 在第二個窗格執行 router
+tmux send-keys -t 2 './client' C-m  # 在第三個窗格執行 client
+
+# 等待 tmux 執行完成並附加到該會話
+tmux attach-session -t mysession
+
 ```
 
 ### 給權限與執行
