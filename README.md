@@ -1,4 +1,3 @@
-# Computer_network
 # Linux 操作指令
 
 ## 共享資料夾
