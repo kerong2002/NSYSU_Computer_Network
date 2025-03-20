@@ -67,18 +67,13 @@ void *tcp_socket(void *argu) {
     int count = 0;
     double avg_queuing_delay = 0.0; // Initialize the average queuing delay
     double fixed_service_time = 2.0; // Fixed service time of 2 seconds
-
+    
     // Create a TCP socket
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         perror("Socket creation failed");
         exit(EXIT_FAILURE);
     }
-
-    // Configure router address settings
-    router_addr.sin_family = AF_INET;
-    router_addr.sin_addr.s_addr = INADDR_ANY;
-    router_addr.sin_port = htons(ROUTER_PORT);
 
      // Set SO_REUSEADDR to allow rebinding to the same port if it's in TIME_WAIT
     int opt = 1;
@@ -93,6 +88,10 @@ void *tcp_socket(void *argu) {
         close(server_fd);
         exit(EXIT_FAILURE);
     }
+    // Configure router address settings
+    router_addr.sin_family = AF_INET;
+    router_addr.sin_addr.s_addr = INADDR_ANY;
+    router_addr.sin_port = htons(ROUTER_PORT);
 
     // Bind the socket to the router address
     if (bind(server_fd, (struct sockaddr *)&router_addr, sizeof(router_addr)) < 0) {
@@ -153,12 +152,12 @@ void *tcp_socket(void *argu) {
         printf("Router: Received TCP\n");
         if (bytes_received > 0) {
             clock_gettime(CLOCK_MONOTONIC, &timestamp_processing_start);  // Record start processing time
-
+            
             usleep(2000 * 1000);  // Simulate fixed service time (2 seconds delay)
             send(server_sock, buffer, bytes_received, 0);
             printf("Router: Sent TCP\n");
             clock_gettime(CLOCK_MONOTONIC, &timestamp_sent);  // Record packet sent time
-
+            
             double waiting_time = (timestamp_processing_start.tv_sec - timestamp_received.tv_sec) +
                                   (timestamp_processing_start.tv_nsec - timestamp_received.tv_nsec) / 1e9;
             double service_time = fixed_service_time;  // Use fixed service time

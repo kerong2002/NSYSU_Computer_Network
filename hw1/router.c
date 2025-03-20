@@ -60,26 +60,20 @@ typedef struct Packet
 
 void *tcp_socket(void *argu) {
     sleep(2); // Delay to synchronize connections
-
+    
     int server_fd, client_fd;
     struct sockaddr_in router_addr, server_addr;
     socklen_t addr_len = sizeof(router_addr);
     char buffer[PACKET_SIZE] = {0};
     int count = 0;
-
+    
     // Create a TCP socket
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         perror("Socket creation failed");
         exit(EXIT_FAILURE);
     }
-
-    // Configure router address settings
-    router_addr.sin_family = AF_INET;
-    router_addr.sin_addr.s_addr = INADDR_ANY;
-    router_addr.sin_port = htons(ROUTER_PORT);
-
-     // Set SO_REUSEADDR to allow rebinding to the same port if it's in TIME_WAIT
+    // Set SO_REUSEADDR to allow rebinding to the same port if it's in TIME_WAIT
     int opt = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         perror("setsockopt(SO_REUSEADDR) failed");
@@ -92,7 +86,11 @@ void *tcp_socket(void *argu) {
         close(server_fd);
         exit(EXIT_FAILURE);
     }
-
+    // Configure router address settings
+    router_addr.sin_family = AF_INET;
+    router_addr.sin_addr.s_addr = INADDR_ANY;
+    router_addr.sin_port = htons(ROUTER_PORT);
+    
     // Bind the socket to the router address
     if (bind(server_fd, (struct sockaddr *)&router_addr, sizeof(router_addr)) < 0) {
         perror("Bind failed");
