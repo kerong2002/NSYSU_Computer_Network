@@ -155,7 +155,7 @@ void udp_msg_sender(int fd, struct sockaddr* dst)
 
 void *tcp_socket(void *argu) {
     // Sleep for 2 seconds (you can adjust or remove this if not needed)
-    sleep(1);
+    sleep(2);
 
     int server_fd, client_socket;
     struct sockaddr_in address;
@@ -213,10 +213,11 @@ void *tcp_socket(void *argu) {
         for (int i = 60; i < 64; i++) {
             cout << buffer[i] << "";
         }
-        printf("\n");
+        
 
         // Increment the packet count
         count++;
+        printf("\n%d\n\n", count);
     }
 
     // Close sockets

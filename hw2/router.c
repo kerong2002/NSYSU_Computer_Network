@@ -59,7 +59,7 @@ typedef struct Packet
 }Packet;
 
 void *tcp_socket(void *argu) {
-    //sleep(2); // Delay to synchronize connections
+    sleep(2); // Delay to synchronize connections
     int server_fd, client_fd;
     struct sockaddr_in router_addr, server_addr;
     socklen_t addr_len = sizeof(router_addr);
@@ -136,13 +136,13 @@ void *tcp_socket(void *argu) {
         struct timespec timestamp_received, timestamp_processing_start, timestamp_sent;
         clock_gettime(CLOCK_MONOTONIC, &timestamp_received);  // Record packet arrival time
         ssize_t bytes_received = read(client_fd, buffer, PACKET_SIZE);
-        
+        printf("Router: Received TCP\n");
         if (bytes_received > 0) {
             clock_gettime(CLOCK_MONOTONIC, &timestamp_processing_start);  // Record start processing time
             
             usleep(2000 * 1000);  // Simulate fixed service time (2 seconds delay)
             send(server_sock, buffer, bytes_received, 0);
-            
+            printf("Router: Sent TCP\n");
             clock_gettime(CLOCK_MONOTONIC, &timestamp_sent);  // Record packet sent time
             
             double waiting_time = (timestamp_processing_start.tv_sec - timestamp_received.tv_sec) +

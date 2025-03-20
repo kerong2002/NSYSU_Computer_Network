@@ -59,7 +59,7 @@ typedef struct Packet
 }Packet;
 
 void *tcp_socket(void *argu) {
-    sleep(1); // Delay to synchronize connections
+    sleep(2); // Delay to synchronize connections
     
     int server_fd, client_fd;
     struct sockaddr_in router_addr, server_addr;
@@ -133,8 +133,10 @@ void *tcp_socket(void *argu) {
     // Receive and forward data
     while (count < 10) {
         ssize_t bytes_received = read(client_fd, buffer, PACKET_SIZE);
+		printf("Router: Received TCP\n");
         if (bytes_received > 0) {
             send(server_sock, buffer, bytes_received, 0); // Forward data to server
+			printf("Router: Sent TCP\n");
         }
         count++;
     }

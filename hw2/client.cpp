@@ -204,17 +204,11 @@ void rcv_UDPpacket(int fd){
     	printf("end");
 }
 
-void print_serv_addr(struct sockaddr_in serv_addr) {
-    char ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(serv_addr.sin_addr), ip, INET_ADDRSTRLEN);
-    printf("IP: %s\n", ip);
-    printf("Port: %d\n", ntohs(serv_addr.sin_port));
-}
 
 void *tcp_socket(void *argu)
 {
 	//code
-	sleep(2);
+	sleep(4);
 	int cnt = 0;
     int server_fd;
     struct sockaddr_in serv_addr;
@@ -242,7 +236,7 @@ void *tcp_socket(void *argu)
         pthread_exit(NULL);
     }
 
-    print_serv_addr(serv_addr);
+    //print_serv_addr(serv_addr);
 
     while (cnt < 10) {
         tcp_msg_sender(server_fd, (struct sockaddr*)&serv_addr);
