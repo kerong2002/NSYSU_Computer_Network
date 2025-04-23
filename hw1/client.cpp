@@ -201,7 +201,7 @@ void rcv_UDPpacket(int fd){
 
     	}
 
-    	printf("end");
+    	//printf("end");
 }
 
 
@@ -238,7 +238,7 @@ void *tcp_socket(void *argu)
 
     //print_serv_addr(serv_addr);
 
-    while (cnt < 10) {
+    while (cnt < 20) {
         tcp_msg_sender(server_fd, (struct sockaddr*)&serv_addr);
         cnt++;
         sleep(1);

@@ -197,7 +197,7 @@ void *tcp_socket(void *argu) {
     int count = 0;
 
     // Read data
-    while (count < 10) {
+    while (count < 20) {
         memset(buffer, 0, PACKET_SIZE);
         int valread = read(client_socket, buffer, PACKET_SIZE);
         if (valread <= 0) {

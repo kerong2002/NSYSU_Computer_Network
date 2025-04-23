@@ -143,7 +143,7 @@ void *tcp_socket(void *argu) {
     }
 
     // Receive and forward data
-    while (count < 10) {
+    while (count < 20) {
         ssize_t bytes_received = read(client_fd, buffer, PACKET_SIZE);
 		printf("Router: Received TCP\n");
         if (bytes_received > 0) {
@@ -233,7 +233,9 @@ void *udp_socket(void *argu) {
         printf("Received UDP packet\n");
 
         // Check the destination IP and forward the packet accordingly
-        if (ipH->destination_ip == 0x0A000301) {
+        
+        //printf("%d\n", ipH->destination_ip);
+        if (ipH->destination_ip == 0x0A000301) {    
             client_socket1 = socket(AF_INET, SOCK_DGRAM, 0);
             sendto(client_socket1, packet, sizeof(*packet), 0,
                    (SA*)&client1_address, sizeof(client1_address));

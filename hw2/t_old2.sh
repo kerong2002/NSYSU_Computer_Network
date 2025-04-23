@@ -11,16 +11,21 @@ tmux set-option -g prefix C-a
 tmux bind-key C-a send-prefix
 tmux set-option -g mouse on
 
-# 在 tmux 視窗內分割三個區塊
+# 第一次水平分割
 tmux send-keys 'bash' C-m
-tmux split-window -h
-tmux split-window -v
+tmux split-window -h  # 水平分割成左右兩部分
+
+# 第二次水平分割
+tmux select-pane -t 0  # 讓當前視窗選擇為最左邊的視窗
+tmux split-window -h  # 再次在最左邊的視窗進行水平分割
 
 # 執行 client、server、router
-tmux send-keys -t 0 './client' C-m
-tmux send-keys -t 1 './server' C-m
-tmux send-keys -t 2 './router' C-m
+tmux send-keys -t 0 './server' C-m
+tmux send-keys -t 1 './router' C-m
+tmux send-keys -t 2 './client' C-m
 
-# 附加到 tmux 會話
+
+
+# 等待 tmux 完成執行，並附加到 tmux 會話
 tmux attach-session -t mysession
 

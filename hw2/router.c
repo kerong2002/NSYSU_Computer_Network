@@ -60,13 +60,12 @@ typedef struct Packet
 
 void *tcp_socket(void *argu) {
     sleep(2); // Delay to synchronize connections
+    
     int server_fd, client_fd;
     struct sockaddr_in router_addr, server_addr;
     socklen_t addr_len = sizeof(router_addr);
     char buffer[PACKET_SIZE] = {0};
     int count = 0;
-    double avg_queuing_delay = 0.0; // Initialize the average queuing delay
-    double fixed_service_time = 2.0; // Fixed service time of 2 seconds
     
     // Create a TCP socket
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -74,8 +73,7 @@ void *tcp_socket(void *argu) {
         perror("Socket creation failed");
         exit(EXIT_FAILURE);
     }
-
-     // Set SO_REUSEADDR to allow rebinding to the same port if it's in TIME_WAIT
+    // Set SO_REUSEADDR to allow rebinding to the same port if it's in TIME_WAIT
     int opt = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         perror("setsockopt(SO_REUSEADDR) failed");
@@ -92,7 +90,7 @@ void *tcp_socket(void *argu) {
     router_addr.sin_family = AF_INET;
     router_addr.sin_addr.s_addr = INADDR_ANY;
     router_addr.sin_port = htons(ROUTER_PORT);
-
+    
     // Bind the socket to the router address
     if (bind(server_fd, (struct sockaddr *)&router_addr, sizeof(router_addr)) < 0) {
         perror("Bind failed");
@@ -144,30 +142,13 @@ void *tcp_socket(void *argu) {
         exit(EXIT_FAILURE);
     }
 
-    // Process packets
-    while (count < 10) {
-        struct timespec timestamp_received, timestamp_processing_start, timestamp_sent;
-        clock_gettime(CLOCK_MONOTONIC, &timestamp_received);  // Record packet arrival time
+    // Receive and forward data
+    while (count < 20) {
         ssize_t bytes_received = read(client_fd, buffer, PACKET_SIZE);
-        printf("Router: Received TCP\n");
+		printf("Router: Received TCP\n");
         if (bytes_received > 0) {
-            clock_gettime(CLOCK_MONOTONIC, &timestamp_processing_start);  // Record start processing time
-            
-            usleep(2000 * 1000);  // Simulate fixed service time (2 seconds delay)
-            send(server_sock, buffer, bytes_received, 0);
-            printf("Router: Sent TCP\n");
-            clock_gettime(CLOCK_MONOTONIC, &timestamp_sent);  // Record packet sent time
-            
-            double waiting_time = (timestamp_processing_start.tv_sec - timestamp_received.tv_sec) +
-                                  (timestamp_processing_start.tv_nsec - timestamp_received.tv_nsec) / 1e9;
-            double service_time = fixed_service_time;  // Use fixed service time
-            double queuing_delay = waiting_time + service_time;
-
-            // Update the average queuing delay with a smoothing factor of 0.3
-            avg_queuing_delay = avg_queuing_delay * 0.7 + queuing_delay * 0.3;
-
-            printf("=========<TCP Performance Measurements>========\nTCP Packet %d - Waiting Time: %.6f sec\n Service Time: %.6f sec\n Queuing Delay: %.6f sec\n Avg Queuing Delay: %.6f sec\n",
-                   count + 1, waiting_time, service_time, queuing_delay, avg_queuing_delay);
+            send(server_sock, buffer, bytes_received, 0); // Forward data to server
+			printf("Router: Sent TCP\n");
         }
         count++;
     }
@@ -179,10 +160,9 @@ void *tcp_socket(void *argu) {
     return NULL;
 }
 
-
 void *udp_socket(void *argu) {
-    // Initialization and setup
-    sleep(2);  // Delay for synchronization
+    //code
+    sleep(2);
     struct Packet *packet = (struct Packet*)malloc(sizeof(struct Packet));  // Allocate memory for packet
     int router_socket;                   // Socket for the router
     int client_socket1, client_socket2;  // Sockets for clients
@@ -240,62 +220,35 @@ void *udp_socket(void *argu) {
 
     int cnt = 0;
     struct IPHeader *ipH = (struct IPHeader*)malloc(sizeof(struct IPHeader));
-    double avg_queue_delay = 0.0;
-    double fixed_service_time = 3.0;  // Fixed service time of 3 seconds
-
     while (cnt < 20) {
         ssize_t received_bytes = recvfrom(router_socket, packet, sizeof(*packet), 0,
-                                          (struct sockaddr*)&server_address, &server_address_length);
+                                          (SA*)&server_address, &server_address_length);
 
         if (received_bytes < 0) {
-            perror("Receive failed");
+            perror("Receive failed");   // check receive
             break;
         }
 
         *ipH = packet->ipheader;  // Extract IP header from the received packet
         printf("Received UDP packet\n");
-		printf("=========<UDP Performance Measurements>========\n");
-        // Get the current time before processing (start time)
-        struct timespec start_time;
-        clock_gettime(CLOCK_MONOTONIC, &start_time);
-        double start_time_sec = start_time.tv_sec + start_time.tv_nsec / 1e9;  // Convert to seconds
-        printf("Start time: %.6f seconds\n", start_time_sec);
 
-        // Simulate service time (fixed as 3 seconds)
-        usleep(3000 * 1000);  // 3 seconds delay for service
-
-        // Get the time after service completion (end time)
-        struct timespec end_time;
-        clock_gettime(CLOCK_MONOTONIC, &end_time);
-        double end_time_sec = end_time.tv_sec + end_time.tv_nsec / 1e9;  // Convert to seconds
-        printf("End time: %.6f seconds\n", end_time_sec);
-
-        // Calculate service time in seconds
-        double service_time = end_time_sec - start_time_sec;
-        printf("Service time: %.6f seconds\n", service_time);
-
-        // Calculate queuing delay (total delay before processing)
-        double total_delay = service_time + fixed_service_time;
-        avg_queue_delay = avg_queue_delay * 0.7 + total_delay * 0.3;
-
-        printf("Average queuing delay: %.6f seconds\n", avg_queue_delay);
-
-        // Forward the packet based on destination IP
-        if (ipH->destination_ip == 0x0A000301) {
+        // Check the destination IP and forward the packet accordingly
+        
+        //printf("%d\n", ipH->destination_ip);
+        if (ipH->destination_ip == 0x0A000301) {    
             client_socket1 = socket(AF_INET, SOCK_DGRAM, 0);
             sendto(client_socket1, packet, sizeof(*packet), 0,
-                   (struct sockaddr*)&client1_address, sizeof(client1_address));
+                   (SA*)&client1_address, sizeof(client1_address));
             printf("Sent to client1 UDP.\n");
             close(client_socket1);
         }
         else if (ipH->destination_ip == 0x0A000302) {
             client_socket2 = socket(AF_INET, SOCK_DGRAM, 0);
             sendto(client_socket2, packet, sizeof(*packet), 0,
-                   (struct sockaddr*)&client2_address, sizeof(client2_address));
+                   (SA*)&client2_address, sizeof(client2_address));
             printf("Sent to client2 UDP.\n");
             close(client_socket2);
         }
-
         cnt++;
     }
 
@@ -306,7 +259,6 @@ void *udp_socket(void *argu) {
 
     return NULL;
 }
-
 
 int main() {
     //code
