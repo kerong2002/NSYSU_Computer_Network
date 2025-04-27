@@ -15,6 +15,8 @@
 #include <iomanip>
 #include <string>
 #include <cstring>
+#include <stdbool.h>
+#include <sys/time.h>
 
 using namespace std;
 
@@ -30,6 +32,11 @@ using namespace std;
 #define CLIENTTWO_PORT 9004
 
 #define SA struct sockaddr
+
+#define QUEUE_SIZE 100
+bool udp_ack_bool = false;
+pthread_mutex_t udp_ack_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t udp_ack_cond = PTHREAD_COND_INITIALIZER;
 
 typedef struct IPHeader{
     uint8_t version_ihl;
@@ -79,6 +86,56 @@ typedef struct Packet
   struct MACHeader macheader;
   char buffer[PACKET_SIZE - 46];
 }Packet;  //UDP Packet
+
+typedef struct Queue{
+	struct timeval data[QUEUE_SIZE];
+	int front;
+	int rear; //end
+	int size;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+}Queue;
+
+
+void initQueue(Queue* q) {
+	q->front = 0;
+	q->rear = 0;
+	q->size = 0;
+
+	pthread_mutex_init(&q->mutex, NULL);
+	pthread_cond_init(&q->cond, NULL);
+}
+
+void enqueue(Queue* q, struct timeval* item) {
+	pthread_mutex_lock(&q->mutex);
+	while(q->size >= QUEUE_SIZE) {
+		pthread_cond_wait(&q->cond, &q->mutex);
+	}
+	q->data[q->rear] = *item;
+	q->rear = (q->rear + 1) % QUEUE_SIZE;
+	q->size++;
+	pthread_cond_signal(&q->cond);
+	pthread_mutex_unlock(&q->mutex);
+}
+
+struct timeval dequeue(Queue* q){
+	struct timeval item;
+	pthread_mutex_lock(&q->mutex);
+	while(q->size <= 0) {
+		pthread_cond_wait(&q->cond, &q->mutex);
+	}
+	item = q->data[q->front];
+	q->front = (q->front + 1) % QUEUE_SIZE;
+	q->size--;
+	pthread_cond_signal(&q->cond);
+	pthread_mutex_unlock(&q->mutex);
+	return item;
+}
+
+void destroyQueue(Queue* q) {
+	pthread_mutex_destroy(&q->mutex);
+	pthread_cond_destroy(&q->cond);
+}
 
 int count;
 char last_payload[5000] = "`abc"; // 保持上次傳輸的 payload
@@ -161,6 +218,10 @@ void tcp_msg_sender(int fd, struct sockaddr* dst){
     memcpy(buffer + sizeof(MACHeader) + sizeof(IPHeader), &tcpHeader, sizeof(TCPHeader));
     memcpy(buffer + sizeof(MACHeader) + sizeof(IPHeader) + sizeof(TCPHeader), payload , payload_length);
 
+	Queue* q = (Queue *)argu;
+	struct timeval current_time;
+	gettimeofday(&current_time, NULL);
+	enqueue(q, &current_time);
     // send to server
     send(fd, buffer, sizeof(buffer) , 0 ); //(socket , buffer ,buffer size,  address length)
     printf("client send tcp packet\n");
@@ -210,10 +271,50 @@ void *tcp_socket(void *argu)
 	//code
 	sleep(4);
 	int cnt = 0;
-    int server_fd;
-    struct sockaddr_in serv_addr;
+    int client_fd;
+    struct sockaddr_in client_addr;
 
     // Create Socket
+    if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("Socket creation error.");
+        exit(EXIT_FAILURE);
+    }
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(ROUTER_PORT); 
+
+    // change ip address(Internet Presentation to Numeric)
+    if (inet_pton(AF_INET, SERVER_IP, &serv_addr.sin_addr) <= 0) {
+        perror("Invalid address / Address not supported");
+        close(client_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Try to connect Server
+    if (connect(client_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        perror("Connection Failed");
+        close(server_fd);
+        pthread_exit(NULL);
+    }
+
+    //print_serv_addr(serv_addr);
+
+    while (cnt < 20) {
+        tcp_msg_sender(server_fd, (struct sockaddr*)&serv_addr);
+        cnt++;
+        usleep(2500);
+    }
+
+    close(server_fd);
+    return NULL;
+}
+
+void *tcp_ack(void *argu) {
+	int client_fd;
+	strcut sockaddr_int address;
+	socklen_t address_length;
+	address_length = sizeof(address);
+	// Create Socket
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("Socket creation error.");
         exit(EXIT_FAILURE);
@@ -228,24 +329,56 @@ void *tcp_socket(void *argu)
         close(server_fd);
         exit(EXIT_FAILURE);
     }
+	
+	float RTT;
+	float ETE;
+	float AveETE;
+	Queue* q = (Queue *)argu;
+	struct timeval current_time;
+	struct timeval timestamp;
+	 // Read data
+    while (count < 20) {
+        memset(buffer, 0, PACKET_SIZE);
+        int valread = read(client_socket, buffer, PACKET_SIZE);
+        if (valread <= 0) {
+            printf("Client disconnected\n");
+            break;
+        }
 
-    // Try to connect Server
-    if (connect(server_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        perror("Connection Failed");
-        close(server_fd);
-        pthread_exit(NULL);
+        printf("-----Server receive-----\n");
+        size_t header_size = sizeof(MACHeader) + sizeof(IPHeader) + sizeof(TCPHeader);
+        char *payload = buffer + header_size;
+        //printf("%ld, %d\n", header_size, PACKET_SIZE);
+        printf("Received payload: ");
+        for (int i = 60; i < 64; i++) {
+            cout << buffer[i] << "";
+        }
+		timestamp = dequeue(q);
+		gettimeofday(&current_time, NULL);
+		RTT = (current_time.tv_sec - timestamp.tv_sec) * 100 + (current_time.tv_usec - timestamp.tv_usec) / 1000.0;
+		ETE = RTT / 2.0;
+		if (cnt == 1) {
+			AvgETE = ETE * 0.7 + ETE * 0.3;
+		}
+		else {
+			AvgETE = AvgETE * 0.7 + ETE * 0.3;
+		}
+		printf("------GET--%02d--ACK-----\n", cnt);
+		printf("RTT:%.3fms\n", RTT);
+		printf("ETE:%.3fms\n", ETE);
+		printf("AvgETE:%.3fms\n", AvgETE);
+		printf("--------------\n");
+        
+		
+        // Increment the packet count
+        count++;
+        printf("\n%d\n\n", count);
     }
 
-    //print_serv_addr(serv_addr);
-
-    while (cnt < 20) {
-        tcp_msg_sender(server_fd, (struct sockaddr*)&serv_addr);
-        cnt++;
-        sleep(1);
-    }
+    // Close sockets
 
     close(server_fd);
-    return NULL;
+	return NULL;
 }
 
 void *udp_socket(void *argu) {
@@ -275,17 +408,61 @@ void *udp_socket(void *argu) {
     return NULL;
 }
 
+void* udp_ack(){
+
+	//code
+    int server_fd;               // server file descriptor
+    struct sockaddr_in ser_addr; // server IP & port
+
+    server_fd = socket(AF_INET, SOCK_DGRAM, 0); // Internet domain & socket datagram
+    if (server_fd < 0) {
+        printf("Create UDP socket fail!\n");    // error message(UDP socket)
+        return NULL;
+    }
+    memset(&ser_addr, 0, sizeof(ser_addr));
+
+    ser_addr.sin_family = AF_INET;              // (TCP/IP - IPv4)
+    ser_addr.sin_addr.s_addr = inet_addr(CLIENT_IP);
+    ser_addr.sin_port = htons(ROUTER_PORT);     // host to network short
+	int cnt = 0;
+	char test[256];
+    while(cnt < 20) {
+		pthread_mutex_lock(&udp_ack_mutex);
+		if(udp_ack_bool = false) {
+			pthread_cond_wait(&udp_ack_cond, &udp_ack_mutex);
+		}
+		else {
+			sendto(server_fd, test, sizeof(test), 0, (struct sockaddr*)&address, (socklen_t)address_length);
+			udp_ack_bool = false;
+			cnt += 1;
+		}
+		pthread_mutex_unlock(&udp_ack_mutex);
+	}
+
+    close(server_fd);
+
+	return NULL;
+}
 
 int main(){
 	//code
 //=============<Linux thread>===================//
-    pthread_t tcp_thread; // TCP thread
-    pthread_t udp_thread; // UDP thread
+	Queue timestampQ;
+	initQueue(&timestampQ);
+	pthread_t threads[4];
+	
+	// 開 thread
+	pthread_create(&threads[0], NULL, tcp_socket, &timestampQ);
+	pthread_create(&threads[1], NULL, tcp_ack,    &timestampQ);
+	pthread_create(&threads[2], NULL, udp_socket, NULL);
+	pthread_create(&threads[3], NULL, udp_ack,    NULL);
 
-    pthread_create(&tcp_thread, NULL, &tcp_socket, NULL);
-	pthread_create(&udp_thread, NULL, &udp_socket, NULL);
-	pthread_join(tcp_thread, NULL);
-	pthread_join(udp_thread, NULL);
-
+	// 等待所有 thread 結束
+	for (int i = 0; i < 8; i++) {
+		pthread_join(threads[i], NULL);
+	}
+	
+	destroyQueue(&tcpQ);
+	destroyQueue(&udpQ);
 	return 0;
 }

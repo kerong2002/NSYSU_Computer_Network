@@ -17,6 +17,9 @@
 #include <string>
 #include <cstring>
 
+#include <stdbool.h>
+#include <sys/time.h>
+
 using namespace std;
 
 #define MTU 1500
@@ -31,7 +34,10 @@ using namespace std;
 #define CLIENTTWO_PORT 9004
 #define SA struct sockaddr
 
-
+#define QUEUE_SIZE 100
+bool tcp_ack_bool = false;
+pthread_mutex_t tcp_ack_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t tcp_ack_cond = PTHREAD_COND_INITIALIZER;
 typedef struct IPHeader{
     uint8_t version_ihl;
     uint8_t type_of_service;
@@ -80,6 +86,57 @@ typedef struct Packet
   struct MACHeader macheader;
   char buffer[PACKET_SIZE - 46];
 }Packet;  //UDP Packet
+
+
+typedef struct Queue{
+	struct timeval data[QUEUE_SIZE];
+	int front;
+	int rear; //end
+	int size;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+}Queue;
+
+
+void initQueue(Queue* q) {
+	q->front = 0;
+	q->rear = 0;
+	q->size = 0;
+
+	pthread_mutex_init(&q->mutex, NULL);
+	pthread_cond_init(&q->cond, NULL);
+}
+
+void enqueue(Queue* q, struct timeval* item) {
+	pthread_mutex_lock(&q->mutex);
+	while(q->size >= QUEUE_SIZE) {
+		pthread_cond_wait(&q->cond, &q->mutex);
+	}
+	q->data[q->rear] = *item;
+	q->rear = (q->rear + 1) % QUEUE_SIZE;
+	q->size++;
+	pthread_cond_signal(&q->cond);
+	pthread_mutex_unlock(&q->mutex);
+}
+
+struct timeval dequeue(Queue* q){
+	struct timeval item;
+	pthread_mutex_lock(&q->mutex);
+	while(q->size <= 0) {
+		pthread_cond_wait(&q->cond, &q->mutex);
+	}
+	item = q->data[q->front];
+	q->front = (q->front + 1) % QUEUE_SIZE;
+	q->size--;
+	pthread_cond_signal(&q->cond);
+	pthread_mutex_unlock(&q->mutex);
+	return item;
+}
+
+void destroyQueue(Queue* q) {
+	pthread_mutex_destroy(&q->mutex);
+	pthread_cond_destroy(&q->cond);
+}
 
 int count = 0;
 
@@ -137,19 +194,23 @@ void udp_msg_sender(int fd, struct sockaddr* dst)
 
 
     socklen_t len;
-
+	
     int cnt=0;
-
+	//Queue* q = (Queue *)argu;
+	//struct timeval current_time;
     while(cnt<20)
     {
-    	cnt+=1;
+    	
         packet->ipheader = *iphdr;
         packet->udpheader = *udphdr;
         packet->macheader = *machdr;
         len = sizeof(*dst);
+		//gettimeofdat(&current_time, NULL);
+		//enqueue(q, &current_time);
         sendto(fd, packet, sizeof(*packet), 0, dst, len);
         printf("server send UDP packet %d !\n", cnt );
-        sleep(1);
+		cnt+=1;
+        usleep(2500);
     }
 }
 
@@ -227,7 +288,9 @@ void *tcp_socket(void *argu) {
     return NULL;
 }
 
-
+void* tcp_ack(void* argu) {
+	return NULL;
+}
 void *udp_socket(void *argu)
 {
 	//code
@@ -257,12 +320,23 @@ int main()
 {
 	//code
 //=============<Linux thread>===================//
+
     pthread_t tcp_thread; // TCP thread
     pthread_t udp_thread; // UDP thread
-
+	pthread_t tcp_ack_thread; // TCP ack thread
+	pthread_t udp_ack_thread; // UDP ack thread
+	
+	Queue timestampQueue;
+	initQueue(&timestampQueue);
+	
     pthread_create(&tcp_thread, NULL, &tcp_socket, NULL);
-	pthread_create(&udp_thread, NULL, &udp_socket, NULL);
+	//pthread_create(&udp_thread, NULL, &udp_socket, NULL);
+	pthread_create(&tcp_ack_thread, NULL, &tcp_ack, NULL);
+	//pthread_create(&udp_ack_thread, NULL, &udp_ack, NULL);
+	
 	pthread_join(tcp_thread, NULL);
-	pthread_join(udp_thread, NULL);
+	//pthread_join(udp_thread, NULL);
+	pthread_join(tcp_ack_thread, NULL);
+	//pthread_join(udp_ack_thread, NULL);
 	return 0;
 }
