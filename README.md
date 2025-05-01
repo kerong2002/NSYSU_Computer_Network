@@ -1,5 +1,8 @@
 # Linux 操作指令
 
+## Output
+![png](https://github.com/kerong2002/Computer_network/blob/main/hw2/output.png)
+
 ## 共享資料夾
 在 Linux 中使用 VirtualBox 時，你可以執行以下指令來設定共享資料夾：
 
