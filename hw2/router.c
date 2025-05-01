@@ -10,10 +10,18 @@
 #include <stdbool.h>
 #include <sys/time.h>
 
+
 #define MTU 1500
 #define BUFF_LEN 10000  //buffer size
 #define PACKET_SIZE 1518
 #define QUEUE_SIZE 100
+
+#define DEBUG_PRINT(mod, fmt, ...) \
+    do { if (mod) printf(fmt, ##__VA_ARGS__); } while (0)
+
+#define udp_debug_mod 0
+#define tcp_debug_mod 0
+
 bool tcp_ack_bool = false;
 pthread_mutex_t tcp_ack_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t tcp_ack_cond = PTHREAD_COND_INITIALIZER;
@@ -28,6 +36,10 @@ pthread_cond_t udp_ack_cond = PTHREAD_COND_INITIALIZER;
 #define ROUTER_PORT 9002
 #define CLIENT_PORT 9003
 #define CLIENTTWO_PORT 9004
+#define TCP_ACK_TO_ROUTER_PORT 9010
+#define TCP_ACK_TO_CLIENT_PORT 9011     //for router
+#define UDP_ACK_TO_ROUTER_PORT 9012
+#define UDP_ACK_TO_SERVER_PORT 9013     //for router
 #define SA struct sockaddr
 
 typedef struct IPHeader{
@@ -69,7 +81,9 @@ typedef struct Packet
 }Packet;
 
 typedef struct Queue{
-	struct timeval data[QUEUE_SIZE];
+        char *data[QUEUE_SIZE];
+        struct timeval entry_time[QUEUE_SIZE]; 
+	//struct timeval data[QUEUE_SIZE];
 	int front;
 	int rear; //end
 	int size;
@@ -87,392 +101,375 @@ void initQueue(Queue* q) {
 	pthread_cond_init(&q->cond, NULL);
 }
 
-void enqueue(Queue* q, struct timeval* item) {
+void enqueue(Queue *q, const char *item, int *qlength, struct timeval *time) {
 	pthread_mutex_lock(&q->mutex);
-	while(q->size >= QUEUE_SIZE) {
+	while (q->size >= QUEUE_SIZE) {
 		pthread_cond_wait(&q->cond, &q->mutex);
 	}
-	q->data[q->rear] = *item;
+	q->data[q->rear] = strdup(item);
+	q->entry_time[q->rear] = *time;
 	q->rear = (q->rear + 1) % QUEUE_SIZE;
 	q->size++;
-	pthread_cond_signal(&q->cond);
+	*qlength = q->size;
+	pthread_cond_signal(&q->cond); 
 	pthread_mutex_unlock(&q->mutex);
 }
 
-struct timeval dequeue(Queue* q){
-	struct timeval item;
-	pthread_mutex_lock(&q->mutex);
-	while(q->size <= 0) {
-		pthread_cond_wait(&q->cond, &q->mutex);
-	}
-	item = q->data[q->front];
-	q->front = (q->front + 1) % QUEUE_SIZE;
-	q->size--;
-	pthread_cond_signal(&q->cond);
-	pthread_mutex_unlock(&q->mutex);
-	return item;
+char *dequeue(Queue *q, int *qlength, struct timeval *time) {
+    pthread_mutex_lock(&q->mutex);
+    while (q->size <= 0) {
+        pthread_cond_wait(&q->cond, &q->mutex);
+    }
+    char *item = q->data[q->front];
+    *time = q->entry_time[q->front];
+    q->front = (q->front + 1) % QUEUE_SIZE;
+    q->size--;
+    *qlength = q->size;
+    pthread_cond_signal(&q->cond);
+    pthread_mutex_unlock(&q->mutex);
+    return item;
 }
+
+
 
 void destroyQueue(Queue* q) {
 	pthread_mutex_destroy(&q->mutex);
 	pthread_cond_destroy(&q->cond);
 }
 
-void *tcp_cts_socket(void *argu) {
-    int server_fd, client_fd;
-    struct sockaddr_in router_addr, server_addr;
-    socklen_t addr_len = sizeof(router_addr);
-    char buffer[PACKET_SIZE] = {0};
-    int count = 0;
-    
-    // Create a TCP socket
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
-        perror("Socket creation failed");
-        exit(EXIT_FAILURE);
-    }
-    // Set SO_REUSEADDR to allow rebinding to the same port if it's in TIME_WAIT
-    int opt = 1;
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt(SO_REUSEADDR) failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
+void *tcp_socket_client(void *argu){
+    char buf[256];
+    int sock_fd, conn_fd;
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
+
+    sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock_fd < 0){
+        printf("create error\n");
+        pthread_exit(0);
     }
 
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt(SO_REUSEPORT) failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-    // Configure router address settings
-    router_addr.sin_family = AF_INET;
-    router_addr.sin_addr.s_addr = INADDR_ANY;
-    router_addr.sin_port = htons(ROUTER_PORT);
-    
-    // Bind the socket to the router address
-    if (bind(server_fd, (struct sockaddr *)&router_addr, sizeof(router_addr)) < 0) {
-        perror("Bind failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(ROUTER_PORT);
+
+    if (bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        printf("bind error\n");
+        pthread_exit(0);
     }
 
-    // Listen for incoming connections
-    if (listen(server_fd, 10) < 0) {
-        perror("Listen failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
+    if (listen(sock_fd, 3) < 0) {
+        printf("listen error\n");
+        pthread_exit(0);
     }
 
-    // Accept an incoming connection
-    client_fd = accept(server_fd, (struct sockaddr *)&router_addr, &addr_len);
-    if (client_fd < 0) {
-        perror("Accept failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
+    conn_fd = accept(sock_fd, (struct sockaddr *)&addr, &addrlen);
+    if (conn_fd < 0) {
+        printf("accept error\n");
+        pthread_exit(0);
     }
 
-    // Create a new socket to connect to the main server
-    int server_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_sock < 0) {
-        perror("Failed to create server socket");
-        close(client_fd);
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
+    struct Queue *queue = (struct Queue*)argu;
+    struct timeval now;
+    int qlen, cnt = 0;
 
-    // Set up the server address structure
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SERVER_PORT);
-    if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) {
-        perror("Invalid server IP address");
-        close(server_sock);
-        close(client_fd);
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
+    while(cnt < 20){
+        recv(conn_fd, buf, sizeof(buf), 0);
+        gettimeofday(&now, NULL);
+        enqueue(queue, strdup(buf), &qlen, &now);
+        DEBUG_PRINT(tcp_debug_mod, "[TCP] Server received TCP packet #%02d\n", cnt+1);
+        printf("TCP Packet from Client #%02d\n", cnt + 1);
+        printf("   QueueLength       : %d\n", qlen);
+        printf("   Timestamp         : %ld.%06ld\n\n", now.tv_sec, now.tv_usec);
 
-    // Connect to the main server
-    if (connect(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Failed to connect to server");
-        close(server_sock);
-        close(client_fd);
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Receive and forward data
-    while (count < 20) {
-        ssize_t bytes_received = read(client_fd, buffer, PACKET_SIZE);
-		printf("Router: Received TCP\n");
-        if (bytes_received > 0) {
-            send(server_sock, buffer, bytes_received, 0); // Forward data to server
-			printf("Router: Sent TCP\n");
-        }
-        count++;
-    }
-
-    // Close sockets
-    close(server_sock);
-    close(client_fd);
-    close(server_fd);
-    return NULL;
-}
-
-void *tcp_stc_ack(void *argu) {
-    int server_fd, client_fd;
-    struct sockaddr_in router_addr, server_addr;
-    socklen_t addr_len = sizeof(router_addr);
-    char buffer[PACKET_SIZE] = {0};
-    int count = 0;
-    
-    // Create a TCP socket
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
-        perror("Socket creation failed");
-        exit(EXIT_FAILURE);
-    }
-    // Set SO_REUSEADDR to allow rebinding to the same port if it's in TIME_WAIT
-    int opt = 1;
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt(SO_REUSEADDR) failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0) {
-        perror("setsockopt(SO_REUSEPORT) failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-    // Configure router address settings
-    router_addr.sin_family = AF_INET;
-    router_addr.sin_addr.s_addr = INADDR_ANY;
-    router_addr.sin_port = htons(ROUTER_PORT);
-    
-    // Bind the socket to the router address
-    if (bind(server_fd, (struct sockaddr *)&router_addr, sizeof(router_addr)) < 0) {
-        perror("Bind failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Listen for incoming connections
-    if (listen(server_fd, 10) < 0) {
-        perror("Listen failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Accept an incoming connection
-    client_fd = accept(server_fd, (struct sockaddr *)&router_addr, &addr_len);
-    if (client_fd < 0) {
-        perror("Accept failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Create a new socket to connect to the main server
-    int server_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_sock < 0) {
-        perror("Failed to create server socket");
-        close(client_fd);
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Set up the server address structure
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SERVER_PORT);
-    if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) {
-        perror("Invalid server IP address");
-        close(server_sock);
-        close(client_fd);
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Connect to the main server
-    if (connect(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Failed to connect to server");
-        close(server_sock);
-        close(client_fd);
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
-
-    // Receive and forward data
-    while (count < 20) {
-        ssize_t bytes_received = read(client_fd, buffer, PACKET_SIZE);
-		printf("Router: Received TCP\n");
-        if (bytes_received > 0) {
-            send(server_sock, buffer, bytes_received, 0); // Forward data to server
-			printf("Router: Sent TCP\n");
-        }
-        count++;
-    }
-
-    // Close sockets
-    close(server_sock);
-    close(client_fd);
-    close(server_fd);
-    return NULL;
-}
-
-
-
-void *udp_stc_socket(void *argu) {
-    //sleep(2);
-    struct Packet *packet = (struct Packet*)malloc(sizeof(struct Packet));
-    if (packet == NULL) {
-        perror("Memory allocation failed");
-        return NULL;
-    }
-
-    int router_socket, client_socket;
-    struct sockaddr_in router_address, server_address, client_address;
-    socklen_t server_address_length = sizeof(server_address);
-
-    // Create a UDP socket for the router
-    router_socket = socket(AF_INET, SOCK_DGRAM, 0);
-    if (router_socket < 0) {
-        perror("Socket creation failed");
-        free(packet);
-        return NULL;
-    }
-
-    // Setup router address
-    memset(&router_address, 0, sizeof(router_address));
-    router_address.sin_family = AF_INET;
-    router_address.sin_addr.s_addr = INADDR_ANY;
-    router_address.sin_port = htons(ROUTER_PORT);
-
-    printf("Listening on UDP port %d...\n", ROUTER_PORT);
-
-    // Bind the router socket
-    if (bind(router_socket, (SA*)&router_address, sizeof(router_address)) != 0) {
-        perror("Bind failed");
-        close(router_socket);
-        free(packet);
-        return NULL;
-    }
-    printf("Bind successful.\n");
-
-    // Setup client address
-    memset(&client_address, 0, sizeof(client_address));
-    client_address.sin_family = AF_INET;
-    client_address.sin_addr.s_addr = INADDR_ANY;
-    client_address.sin_port = htons(CLIENT_PORT);
-
-    int cnt = 0;
-    struct IPHeader *ipH = (struct IPHeader*)malloc(sizeof(struct IPHeader));
-    if (ipH == NULL) {
-        perror("Memory allocation failed");
-        close(router_socket);
-        free(packet);
-        return NULL;
-    }
-
-    while (cnt < 20) {
-        ssize_t received_bytes = recvfrom(router_socket, packet, sizeof(*packet), 0,
-                                          (SA*)&server_address, &server_address_length);
-
-        if (received_bytes < 0) {
-            perror("Receive failed");
-            break;
-        }
-
-        *ipH = packet->ipheader;
-        printf("Received UDP packet\n");
-
-        // 只轉發到 client1
-        if (ipH->destination_ip == 0x0A000301) { // 目標 IP 是 client1
-            client_socket = socket(AF_INET, SOCK_DGRAM, 0);
-            if (client_socket < 0) {
-                perror("Client socket creation failed");
-                break;
-            }
-
-            sendto(client_socket, packet, sizeof(*packet), 0,
-                   (SA*)&client_address, sizeof(client_address));
-            printf("Sent to client UDP.\n");
-
-            close(client_socket);
-        }
         cnt++;
     }
 
-    // Cleanup
-    close(router_socket);
-    free(packet);
-    free(ipH);
+    close(conn_fd);
+    close(sock_fd);
+    return NULL;
+}
 
+void *tcp_socket_server(void *argu){
+    int sock_fd;
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
+
+    sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock_fd < 0){
+        printf("create error\n");
+        pthread_exit(0);
+    }
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(SERVER_PORT);
+    if(inet_pton(AF_INET, SERVER_IP, &addr.sin_addr) <= 0) {
+        printf("SERVER_IP error\n");
+        pthread_exit(0);
+    }
+
+    if (connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        printf("connect error\n");
+        pthread_exit(0);
+    }
+
+    struct Queue *queue = (struct Queue*)argu;
+    struct timeval now, entry, svc_start, svc_end;
+    float qtime, stime, delay = 0, avgdelay = 0;
+    int qlen, cnt = 0;
+
+    while(cnt < 20){
+        char *data = dequeue(queue, &qlen, &entry);
+        gettimeofday(&now, NULL);
+        DEBUG_PRINT(tcp_debug_mod, "[TCP] Server received TCP packet #%02d\n", cnt+1);
+        qtime = (now.tv_sec - entry.tv_sec) * 1000 + (now.tv_usec - entry.tv_usec) / 1000.0;
+        gettimeofday(&svc_start, NULL);
+        usleep(30 * 1000);
+        gettimeofday(&svc_end, NULL);
+        stime = (svc_end.tv_sec - svc_start.tv_sec) * 1000 + (svc_end.tv_usec - svc_start.tv_usec) / 1000.0;
+
+        delay = qtime + stime;
+        avgdelay = (cnt == 0) ? delay : avgdelay * 0.7 + delay * 0.3;
+
+        send(sock_fd, data, 256, 0);
+
+        printf("TCP Packet to Server #%02d\n", cnt + 1);
+        printf("   QueueLength       : %d\n", qlen);
+        printf("   QueuingTime       : %.3f ms\n", qtime);
+        printf("   ServiceTime       : %.3f ms\n", stime);
+        printf("   QueuingDelay      : %.3f ms\n", delay);
+        printf("   AvgQueuingDelay   : %.3f ms\n\n", avgdelay);
+
+        free(data);
+        cnt++;
+        usleep(5000);
+    }
+
+    close(sock_fd);
     return NULL;
 }
 
 
 
-void *udp_socket_s(void *argu) {
-    int client_socket;
-    struct sockaddr_in client_address, router_address;
-    socklen_t router_address_length = sizeof(router_address);
+void *tcp_ack_to_client(void *argu){
+    int sock_fd;
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
+    char buf[256] = {0};
+    int cnt = 0;
 
-    struct Packet *packet = (struct Packet*)malloc(sizeof(struct Packet));
-    if (packet == NULL) {
-        perror("Memory allocation failed");
-        return NULL;
+    sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if(sock_fd < 0){
+        printf("create error\n");
+        pthread_exit(0);
     }
 
-    // 創建 UDP socket
-    client_socket = socket(AF_INET, SOCK_DGRAM, 0);
-    if (client_socket < 0) {
-        perror("Socket creation failed");
-        free(packet);
-        return NULL;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(TCP_ACK_TO_CLIENT_PORT);
+    if(inet_pton(AF_INET, SERVER_IP, &addr.sin_addr) <= 0){
+        printf("SERVER_IP error\n");
+        pthread_exit(0);
     }
 
-    // 綁定自己的 IP 和 PORT
-    memset(&client_address, 0, sizeof(client_address));
-    client_address.sin_family = AF_INET;
-    client_address.sin_addr.s_addr = INADDR_ANY;
-    client_address.sin_port = htons(CLIENT_PORT);
-
-    if (bind(client_socket, (SA*)&client_address, sizeof(client_address)) != 0) {
-        perror("Bind failed");
-        close(client_socket);
-        free(packet);
-        return NULL;
-    }
-
-    printf("Client waiting for UDP packet...\n");
-
-    while (1) {
-        ssize_t received_bytes = recvfrom(client_socket, packet, sizeof(*packet), 0,
-                                          (SA*)&router_address, &router_address_length);
-        if (received_bytes < 0) {
-            perror("Receive failed");
-            break;
+    while(cnt < 20){
+        pthread_mutex_lock(&tcp_ack_mutex);
+        if(!tcp_ack_bool){
+            pthread_cond_wait(&tcp_ack_cond, &tcp_ack_mutex);
+        } else {
+            sendto(sock_fd, buf, sizeof(buf), 0, (struct sockaddr*)&addr, addrlen);
+            tcp_ack_bool = false;
+            DEBUG_PRINT(tcp_debug_mod, "[TCP] Server received TCP packet #%02d\n", cnt+1);
+            printf("Send TCP ACK to Client #%02d\n", cnt + 1);
+            printf("   Status            : ACK sent\n\n");
+            cnt++;
         }
-
-        printf("Client received packet, sending ACK...\n");
-
-        // 準備 ACK packet
-        struct Packet ack_packet;
-        memset(&ack_packet, 0, sizeof(ack_packet));
-        ack_packet.ipheader.source_ip = 0x0A000301;      // client IP
-        ack_packet.ipheader.destination_ip = 0x0A000201; // server IP (自己設定)
-
-        // 送回 ACK 給 Router，Router 再轉發到 Server
-        sendto(client_socket, &ack_packet, sizeof(ack_packet), 0,
-               (SA*)&router_address, router_address_length);
-        printf("ACK sent back to Server.\n");
+        pthread_mutex_unlock(&tcp_ack_mutex);
     }
 
-    close(client_socket);
-    free(packet);
-
+    close(sock_fd);
     return NULL;
 }
 
+void *tcp_ack_fr_server(void *argu){
+    int sock_fd;
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
+    char buf[256];
+    int cnt = 0;
+
+    sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if(sock_fd < 0){
+        printf("create error\n");
+        pthread_exit(0);
+    }
+
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(TCP_ACK_TO_ROUTER_PORT);
+
+    if (bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        printf("bind error\n");
+        pthread_exit(0);
+    }
+
+    while(cnt < 20){
+        recvfrom(sock_fd, buf, sizeof(buf), 0, (struct sockaddr*)&addr, &addrlen);
+        pthread_mutex_lock(&tcp_ack_mutex);
+        tcp_ack_bool = true;
+        pthread_cond_signal(&tcp_ack_cond);
+        pthread_mutex_unlock(&tcp_ack_mutex);
+
+        printf("Receive TCP ACK from Server #%02d\n", cnt + 1);
+        printf("   Status            : ACK received\n\n");
+        cnt++;
+    }
+
+    close(sock_fd);
+    return NULL;
+}
+
+void *udp_socket_server(void *argu) {
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("UDP socket_server creation failed");
+        pthread_exit(NULL);
+    }
+    else {
+        DEBUG_PRINT(udp_debug_mod, "Create success\n");
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(ROUTER_PORT);
+    if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("UDP socket_server bind failed");
+        pthread_exit(NULL);
+    }
+    struct Queue *q = (struct Queue *)argu;
+    struct timeval now;
+    int qlen;
+    char buf[256];
+    socklen_t len = sizeof(addr);
+    for (int i = 0; i < 20; i++) {
+        recvfrom(sockfd, buf, sizeof(buf), 0, (struct sockaddr *)&addr, &len);
+        gettimeofday(&now, NULL);
+        enqueue(q, strdup(buf), &qlen, &now);
+        printf("UDP Received from server, Queue: %d\n", qlen);
+    }
+
+    close(sockfd);
+    return NULL;
+}
+
+void *udp_socket_client(void *argu) {
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("UDP socket_client creation failed");
+        pthread_exit(NULL);
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(CLIENT_PORT);
+    if (inet_pton(AF_INET, CLIENT_IP, &addr.sin_addr) <= 0) {
+        perror("inet_pton client_ip failed");
+        pthread_exit(NULL);
+    }
+
+    struct Queue *queue = (struct Queue *)argu;
+    struct timeval t_start, t_end, t_entry;
+    float delay_total = 0, delay_avg = 0, delay_queue = 0, delay_service = 0;
+    int queue_len = 0;
+
+    for (int i = 0; i < 20; i++) {
+        struct timeval t_service_start, t_service_end;
+
+        char *payload = dequeue(queue, &queue_len, &t_entry);
+
+        gettimeofday(&t_start, NULL);
+        delay_queue = (t_start.tv_sec - t_entry.tv_sec) * 1000.0 +
+                      (t_start.tv_usec - t_entry.tv_usec) / 1000.0;
+
+        gettimeofday(&t_service_start, NULL);
+        usleep(100 * 1000);  // 模擬服務時間
+        gettimeofday(&t_service_end, NULL);
+
+        delay_service = (t_service_end.tv_sec - t_service_start.tv_sec) * 1000.0 +
+                        (t_service_end.tv_usec - t_service_start.tv_usec) / 1000.0;
+
+        delay_total = delay_queue + delay_service;
+        delay_avg = (i == 0) ? delay_total : delay_avg * 0.7 + delay_total * 0.3;
+
+        printf("Sent UDP Packet #%02d\n", i + 1);
+        printf("   Queue Size        : %d\n", queue_len);
+        printf("   Queuing Delay     : %.3f ms\n", delay_queue);
+        printf("   Service Delay     : %.3f ms\n", delay_service);
+        printf("   Total Delay       : %.3f ms\n", delay_total);
+        printf("   Smoothed Avg Delay: %.3f ms\n\n", delay_avg);
+
+        sendto(sockfd, payload, strlen(payload), 0, (struct sockaddr *)&addr, sizeof(addr));
+        free(payload);
+        usleep(5000);
+    }
+
+
+
+    close(sockfd);
+    return NULL;
+}
+
+void *udp_ack_fr_client(void *argu) {
+    int sockfd;
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    char buffer[256];
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(UDP_ACK_TO_ROUTER_PORT);
+    bind(sockfd, (SA *)&addr, sizeof(addr));
+
+    for (int i = 0; i < 20; i++) {
+        recvfrom(sockfd, buffer, sizeof(buffer), 0, (SA *)&addr, &len);
+        pthread_mutex_lock(&udp_ack_mutex);
+        udp_ack_bool = true;
+        pthread_cond_signal(&udp_ack_cond);
+        pthread_mutex_unlock(&udp_ack_mutex);
+        DEBUG_PRINT(udp_debug_mod, "Router received UDP ACK from client\n");
+    }
+    close(sockfd);
+    return NULL;
+}
+
+void *udp_ack_to_server(void *argu) {
+    int sockfd;
+    struct sockaddr_in addr;
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr(SERVER_IP);
+    addr.sin_port = htons(UDP_ACK_TO_SERVER_PORT);
+
+    char test[256] = {0};
+    int cnt = 0;
+    while (cnt < 20) {
+        pthread_mutex_lock(&udp_ack_mutex);
+        if (!udp_ack_bool)
+            pthread_cond_wait(&udp_ack_cond, &udp_ack_mutex);
+        else {
+            sendto(sockfd, test, sizeof(test), 0, (SA *)&addr, sizeof(addr));
+            udp_ack_bool = false;
+            DEBUG_PRINT(udp_debug_mod, "Router sent UDP ACK to server\n");
+            cnt++;
+        }
+        pthread_mutex_unlock(&udp_ack_mutex);
+    }
+    close(sockfd);
+    return NULL;
+}
 
 int main() {
     //code
@@ -480,21 +477,34 @@ int main() {
 
 	Queue tcpQ, udpQ;
 	pthread_t threads[8];
-
+        initQueue(&tcpQ);
+        initQueue(&udpQ);
+        
 	// 開 thread
-	pthread_create(&threads[0], NULL, tcp_socket_c, &tcpQ);
-	pthread_create(&threads[1], NULL, tcp_socket_s, &tcpQ);
-	pthread_create(&threads[2], NULL, udp_socket_c, &udpQ);
-	pthread_create(&threads[3], NULL, udp_socket_s, &udpQ);
-	pthread_create(&threads[4], NULL, tcp_ack_to_c, NULL);
-	pthread_create(&threads[5], NULL, tcp_ack_fr_s, NULL);
-	pthread_create(&threads[6], NULL, udp_ack_to_s, NULL);
-	pthread_create(&threads[7], NULL, udp_ack_fr_c, NULL);
+	pthread_create(&threads[0], NULL, tcp_socket_client, &tcpQ);
+	pthread_create(&threads[1], NULL, tcp_socket_server, &tcpQ); //g
+	pthread_create(&threads[2], NULL, udp_socket_client, &udpQ); //g
+	pthread_create(&threads[3], NULL, udp_socket_server, &udpQ);
+	pthread_create(&threads[4], NULL, tcp_ack_fr_server, NULL);
+	pthread_create(&threads[5], NULL, tcp_ack_to_client, NULL);
+	pthread_create(&threads[6], NULL, udp_ack_to_server, NULL);
+	pthread_create(&threads[7], NULL, udp_ack_fr_client, NULL);
 
 	// 等待所有 thread 結束
-	for (int i = 0; i < 8; i++) {
-		pthread_join(threads[i], NULL);
-	}
+	for (int i = 0; i < 8; i++) pthread_join(threads[i], NULL);
+	
+	//printf("YES 1\n");
+	//pthread_join(threads[0], NULL);
+	//pthread_join(threads[1], NULL);
+	//pthread_join(threads[2], NULL);
+	//pthread_join(threads[3], NULL);
+	//pthread_join(threads[4], NULL);
+	//pthread_join(threads[5], NULL);
+	//pthread_join(threads[6], NULL);
+	//pthread_join(threads[7], NULL);
+	//printf("YES 2\n");
+	//pthread_join(threads[3], NULL);
+	
 	
 	destroyQueue(&tcpQ);
 	destroyQueue(&udpQ);

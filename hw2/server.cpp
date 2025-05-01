@@ -32,6 +32,15 @@ using namespace std;
 #define ROUTER_PORT 9002
 #define CLIENT_PORT 9003
 #define CLIENTTWO_PORT 9004
+#define TCP_ACK_TO_ROUTER_PORT 9010
+#define TCP_ACK_TO_CLIENT_PORT 9011     //for router
+#define UDP_ACK_TO_ROUTER_PORT 9012
+#define UDP_ACK_TO_SERVER_PORT 9013     //for router
+
+#define udp_debug_mod 0
+#define tcp_debug_mod 0
+#define DEBUG_PRINT(mod, fmt, ...) do { if (mod) printf(fmt, ##__VA_ARGS__); } while (0)
+
 #define SA struct sockaddr
 
 #define QUEUE_SIZE 100
@@ -140,203 +149,218 @@ void destroyQueue(Queue* q) {
 
 int count = 0;
 
-void udp_msg_sender(int fd, struct sockaddr* dst)
-{
-    int payload_size;
+void udp_msg_sender(int fd, struct sockaddr* dst) {
+    struct MACHeader machdr = {
+        .sour_mac = {0x12, 0x34, 0x56, 0x78, 0x90, 0x98},
+        .des_mac = {0x21, 0x43, 0x65, 0x87, 0x90, 0x89},
+        .fram_typ = 0x0000,
+        .crc = 0x00000000
+    };
 
-    //create MAC header
-    struct MACHeader *machdr = (struct MACHeader *)malloc(sizeof(struct MACHeader));
-    unsigned char sour[] = {0x12,0x34,0x56,0x78,0x90,0x98};
-    unsigned char des[] = {0x21,0x43,0x65,0x87,0x90,0x89};
-    memcpy(machdr->sour_mac, sour , sizeof(sour));
-    memcpy(machdr->des_mac, des , sizeof(des));
-    machdr->fram_typ = 0x0000;
-    machdr->crc = 0x00000000;
+    struct IPHeader iphdr = {
+        .version_ihl = 0x45,
+        .type_of_service = 0,
+        .total_length = htons(MTU),
+        .identification = htons(0xAAAA),
+        .flags_fragment_offset = htons(0x4000),
+        .time_to_live = 100,
+        .protocol = 0x11,
+        .header_checksum = 0,
+        .source_ip = htonl(0x0A115945),
+        .destination_ip = htonl(0x0A000301),
+        .options = 0
+    };
 
-    //create IP header
-	struct IPHeader *iphdr = (struct IPHeader *)malloc(sizeof(struct IPHeader));
-	iphdr->version_ihl = 0x45;
-	iphdr->total_length = MTU;
-	iphdr->identification = 0xAAAA;
-	iphdr->flags_fragment_offset = 0x4000;
-	iphdr->time_to_live = 100;
-	iphdr->protocol = 0x11; //udp
-	iphdr->header_checksum = 0;
-	iphdr->source_ip = 0x0A115945;
-	iphdr->destination_ip = 0x0A000301;
-	iphdr->options = 0;
+    struct UDPHeader udphdr = {
+        .source_port = htons(10000),
+        .dest_port = htons(10010),
+        .Segment_Length = htons(MTU - 38),
+        .Checksum = 0
+    };
 
-    //create UDP header
-	struct UDPHeader *udphdr = (struct UDPHeader *)malloc(sizeof(struct UDPHeader));
-	udphdr->source_port = 10000;
-	udphdr->dest_port = 10010;
-	udphdr->Segment_Length = MTU - 38;
-	udphdr->Checksum = 0;
+    struct Packet packet = {
+        .ipheader = iphdr,
+        .udpheader = udphdr,
+        .macheader = machdr
+    };
 
-
-
-    payload_size = MTU - sizeof(*iphdr) - sizeof(*udphdr) - sizeof(*machdr);
-
-
-
-    char buf[payload_size];
-    for(int i=0 ; i<payload_size ; i++)
-    {
-    	buf[i] = 1;
-    }
-
-    struct Packet *packet = (struct Packet *)malloc(sizeof(struct Packet));
-
-    packet->ipheader = *iphdr;
-    packet->udpheader = *udphdr;
-    packet->macheader = *machdr;
-
-
-
-    socklen_t len;
-	
-    int cnt=0;
-	//Queue* q = (Queue *)argu;
-	//struct timeval current_time;
-    while(cnt<20)
-    {
-    	
-        packet->ipheader = *iphdr;
-        packet->udpheader = *udphdr;
-        packet->macheader = *machdr;
-        len = sizeof(*dst);
-		//gettimeofdat(&current_time, NULL);
-		//enqueue(q, &current_time);
-        sendto(fd, packet, sizeof(*packet), 0, dst, len);
-        printf("server send UDP packet %d !\n", cnt );
-		cnt+=1;
-        usleep(2500);
-    }
+    memset(packet.buffer, 1, sizeof(packet.buffer));
+    sendto(fd, &packet, sizeof(packet), 0, dst, sizeof(struct sockaddr_in));
 }
 
-void *tcp_socket(void *argu) {
-    // Sleep for 2 seconds (you can adjust or remove this if not needed)
-    sleep(2);
+void *tcp_socket(void *argu){
+    char test[256];
+    int sock_fd, new_fd;
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
 
-    int server_fd, client_socket;
-    struct sockaddr_in address;
-    int addrlen = sizeof(address);
-    char buffer[PACKET_SIZE] = {0};
-
-    // Create TCP socket
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        perror("Socket creation error");
-        exit(EXIT_FAILURE);
+    sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock_fd < 0){
+        printf("create error\n");
+        pthread_exit(0);
     }
 
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(SERVER_PORT);
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(SERVER_PORT);
 
-    // Bind socket to port
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("Bind failed");
-        exit(EXIT_FAILURE);
+    if (bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        printf("bind error\n");
+        pthread_exit(0);
     }
 
-    // Listen for incoming connections
-    if (listen(server_fd, 10) < 0) {
-        perror("Listen failed");
-        exit(EXIT_FAILURE);
+    if (listen(sock_fd, 3) < 0) {
+        printf("listen error\n");
+        pthread_exit(0);
     }
 
-    printf("TCP server listening on port %d ...\n", SERVER_PORT);
-
-    // Accept client connection
-    if ((client_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
-        perror("Accept failed");
-        exit(EXIT_FAILURE);
+    new_fd = accept(sock_fd, (struct sockaddr *)&addr, &addrlen);
+    if (new_fd < 0) {
+        printf("accept error\n");
+        pthread_exit(0);
     }
 
-    printf("Client connected\n");
-
-    int count = 0;
-
-    // Read data
-    while (count < 20) {
-        memset(buffer, 0, PACKET_SIZE);
-        int valread = read(client_socket, buffer, PACKET_SIZE);
-        if (valread <= 0) {
-            printf("Client disconnected\n");
-            break;
-        }
-
-        printf("-----Server receive-----\n");
-        size_t header_size = sizeof(MACHeader) + sizeof(IPHeader) + sizeof(TCPHeader);
-        char *payload = buffer + header_size;
-        //printf("%ld, %d\n", header_size, PACKET_SIZE);
-        printf("Received payload: ");
-        for (int i = 60; i < 64; i++) {
-            cout << buffer[i] << "";
-        }
-        
-
-        // Increment the packet count
-        count++;
-        printf("\n%d\n\n", count);
+    for (int i = 0; i < 20; i++) {
+        recv(new_fd, test, sizeof(test), 0);
+        pthread_mutex_lock(&tcp_ack_mutex);
+        tcp_ack_bool = true;
+        pthread_cond_signal(&tcp_ack_cond);
+        pthread_mutex_unlock(&tcp_ack_mutex);
+        DEBUG_PRINT(tcp_debug_mod, "[TCP] Server received TCP packet #%02d\n", i+1);
     }
 
-    // Close sockets
-    close(client_socket);
-    close(server_fd);
-
+    close(new_fd);
+    close(sock_fd);
     return NULL;
 }
 
-void* tcp_ack(void* argu) {
-	return NULL;
-}
-void *udp_socket(void *argu)
-{
-	//code
-    sleep(4);
-    int server_fd;               // server file descriptor
-    struct sockaddr_in ser_addr; // server IP & port
+void *tcp_ack(void *argu){
+    int sock_fd;
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
+    char test[256];
+    int cnt = 1;
 
-    server_fd = socket(AF_INET, SOCK_DGRAM, 0); // Internet domain & socket datagram
-    if (server_fd < 0) {
-        printf("Create UDP socket fail!\n");    // error message(UDP socket)
-        return NULL;
+    sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if(sock_fd < 0){
+        printf("create error\n");
+        pthread_exit(0);
     }
-    memset(&ser_addr, 0, sizeof(ser_addr));
 
-    ser_addr.sin_family = AF_INET;              // (TCP/IP - IPv4)
-    ser_addr.sin_addr.s_addr = inet_addr(CLIENT_IP);
-    ser_addr.sin_port = htons(ROUTER_PORT);     // host to network short
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(TCP_ACK_TO_ROUTER_PORT);
+    if(inet_pton(AF_INET, SERVER_IP, &addr.sin_addr) <= 0) { 
+        printf("IP error\n");
+        pthread_exit(0);
+    }
 
-    udp_msg_sender(server_fd, (struct sockaddr*)&ser_addr);
+    while(cnt <= 20){
+        pthread_mutex_lock(&tcp_ack_mutex);
+        if(!tcp_ack_bool){
+            pthread_cond_wait(&tcp_ack_cond, &tcp_ack_mutex);
+        } else {
+            sendto(sock_fd, test, sizeof(test), 0, (struct sockaddr*)&addr, addrlen);
+            tcp_ack_bool = false;
+            DEBUG_PRINT(tcp_debug_mod, "[TCP] Server sent TCP ACK #%02d\n", cnt);
+            cnt++;
+        }
+        pthread_mutex_unlock(&tcp_ack_mutex);
+    }
 
-    close(server_fd);
-
-	return NULL;
+    close(sock_fd);
+    return NULL;
 }
+
+
+void *udp_socket(void *argu) {
+
+    int sockfd;
+    struct sockaddr_in addr;
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    //memset(&ser_addr, 0, sizeof(ser_addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(ROUTER_PORT);
+    inet_pton(AF_INET, CLIENT_IP, &addr.sin_addr);
+    struct Queue *q = (struct Queue *)argu;
+    sleep(2);
+    for (int i = 0; i < 20; i++) {
+        struct timeval now;
+        gettimeofday(&now, NULL);
+        enqueue(q, &now);
+        udp_msg_sender(sockfd, (struct sockaddr *)&addr);
+        DEBUG_PRINT(udp_debug_mod, "Server sent custom UDP packet %d\n", i+1);
+        usleep(2500);
+    }
+    close(sockfd);
+    return NULL;
+}
+
+void *udp_ack(void *argu) {
+    int sockfd;
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(UDP_ACK_TO_SERVER_PORT);
+    bind(sockfd, (struct sockaddr *)&addr, sizeof(addr));
+    
+    struct Queue *queue = (struct Queue *)argu;
+    float rtt = 0, ete = 0, avg_ete = 0;
+
+    for (int i = 0; i < 20; i++) {
+        char buffer[256];
+        recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&addr, &addrlen);
+
+        struct timeval t_now = {}, t_then = dequeue(queue);
+        gettimeofday(&t_now, NULL);
+
+        rtt = (t_now.tv_sec - t_then.tv_sec) * 1000.0 +
+              (t_now.tv_usec - t_then.tv_usec) / 1000.0;
+        ete = rtt / 2.0;
+        avg_ete = (i == 0) ? ete : avg_ete * 0.7 + ete * 0.3;
+
+        printf("Receive UDP ACK #%02d\n", i + 1);
+        printf("   RTT              : %.3f ms\n", rtt);
+        printf("   ETE              : %.3f ms\n", ete);
+        printf("   AvgETE           : %.3f ms\n\n", avg_ete);
+    }
+
+    close(sockfd);
+    return NULL;
+}
+
 
 int main()
 {
 	//code
 //=============<Linux thread>===================//
+    Queue timestampQ;
+    initQueue(&timestampQ);
+    pthread_t threads[4];
+    //================================//
+    //           SERVER               //
+    //--------------------------------//
+    //    TCP -> server (tcp_socket)  //
+    //    ACK <- TCP    (tcp_ack)     //
+    //    UDP <- server (udp_socket)  //
+    //    ACK -> UDP    (udp_ack)     //
+    //================================//
 
-    pthread_t tcp_thread; // TCP thread
-    pthread_t udp_thread; // UDP thread
-	pthread_t tcp_ack_thread; // TCP ack thread
-	pthread_t udp_ack_thread; // UDP ack thread
-	
-	Queue timestampQueue;
-	initQueue(&timestampQueue);
-	
-    pthread_create(&tcp_thread, NULL, &tcp_socket, NULL);
-	//pthread_create(&udp_thread, NULL, &udp_socket, NULL);
-	pthread_create(&tcp_ack_thread, NULL, &tcp_ack, NULL);
-	//pthread_create(&udp_ack_thread, NULL, &udp_ack, NULL);
-	
-	pthread_join(tcp_thread, NULL);
-	//pthread_join(udp_thread, NULL);
-	pthread_join(tcp_ack_thread, NULL);
-	//pthread_join(udp_ack_thread, NULL);
-	return 0;
+    // (tcp socket) ROUNTER_PORT
+    // (tcp ack)    TCP_ACK_TO_ROUTER_PORT
+    // (udp socket) ROUTER_PORT
+    // (udp ack)    UDP_ACK_TO_ROUTER_PORT
+    
+    // 開 thread
+    pthread_create(&threads[0], NULL, tcp_socket, NULL);
+    pthread_create(&threads[1], NULL, tcp_ack,    NULL);
+    pthread_create(&threads[2], NULL, udp_socket, &timestampQ);
+    pthread_create(&threads[3], NULL, udp_ack,    &timestampQ);
+
+    // 等待所有 thread 結束
+    for (int i = 0; i < 4; i++) pthread_join(threads[i], NULL);
+    
+    destroyQueue(&timestampQ);
+    return 0;
 }

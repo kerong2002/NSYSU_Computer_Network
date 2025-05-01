@@ -17,6 +17,11 @@ kill_process_by_port 9000
 kill_process_by_port 9002
 kill_process_by_port 9003
 kill_process_by_port 9004
+kill_process_by_port 9010
+kill_process_by_port 9011
+kill_process_by_port 9012
+kill_process_by_port 9013
+
 
 # Kill any existing tmux session to avoid duplicates
 tmux kill-session -t mysession 2>/dev/null
@@ -39,8 +44,11 @@ tmux split-window -h  # Further split the left pane
 
 # Execute client, server, router in different panes
 tmux send-keys -t 0 './server' C-m
+#sleep 0.5
 tmux send-keys -t 1 './router' C-m
+#sleep 0.5
 tmux send-keys -t 2 './client' C-m
+
 
 # Wait for tmux to finish execution and attach to the session
 tmux attach-session -t mysession
