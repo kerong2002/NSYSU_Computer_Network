@@ -257,7 +257,7 @@ void tcp_msg_sender(int fd) {
 
 
 void *tcp_socket(void *argu){
-    sleep(1);
+    
     int sock_fd;
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
@@ -277,9 +277,9 @@ void *tcp_socket(void *argu){
         printf("SERVER_IP error\n");
         pthread_exit(0);
     }
-
+    sleep(2);
     if (connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        printf("connect error\n");
+        printf("tcp socket connect error\n");
         pthread_exit(0);
     }
 
@@ -356,7 +356,7 @@ void* udp_socket(void* argu) {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(CLIENT_PORT);
     
-    //sleep(2);
+    sleep(2);
     if (bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 	printf("bind error\n");
 	pthread_exit(0);
@@ -381,7 +381,6 @@ void* udp_socket(void* argu) {
 
 
 void* udp_ack(void* argu) {
-    sleep(2);
     int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     struct sockaddr_in addr;
 	memset(&addr, 0, sizeof(addr));
@@ -433,8 +432,8 @@ int main(){
     pthread_t threads[4];
 
     pthread_create(&threads[0], NULL, tcp_socket, &q);
-    pthread_create(&threads[1], NULL, tcp_ack, &q);
-    pthread_create(&threads[2], NULL, udp_socket, NULL);
+    pthread_create(&threads[1], NULL, udp_socket, NULL);
+    pthread_create(&threads[2], NULL, tcp_ack, &q);
     pthread_create(&threads[3], NULL, udp_ack, NULL);
     
     

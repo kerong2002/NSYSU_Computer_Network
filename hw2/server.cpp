@@ -189,6 +189,7 @@ void udp_msg_sender(int fd, struct sockaddr* dst) {
 }
 
 void *tcp_socket(void *argu){
+    //sleep(1);
     char test[256];
     int sock_fd, new_fd;
     struct sockaddr_in addr;
@@ -205,7 +206,7 @@ void *tcp_socket(void *argu){
     addr.sin_port = htons(SERVER_PORT);
 
     if (bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        printf("bind error\n");
+        printf("tcp socket bind error\n");
         pthread_exit(0);
     }
 
@@ -274,8 +275,9 @@ void *tcp_ack(void *argu){
 
 void *udp_socket(void *argu) {
 
-    int sockfd;
+     int sockfd;
     struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     //memset(&ser_addr, 0, sizeof(ser_addr));
     addr.sin_family = AF_INET;
@@ -283,11 +285,13 @@ void *udp_socket(void *argu) {
     inet_pton(AF_INET, CLIENT_IP, &addr.sin_addr);
     struct Queue *q = (struct Queue *)argu;
     sleep(2);
+    char buf[256];
     for (int i = 0; i < 20; i++) {
         struct timeval now;
         gettimeofday(&now, NULL);
         enqueue(q, &now);
-        udp_msg_sender(sockfd, (struct sockaddr *)&addr);
+        //udp_msg_sender(sockfd, (struct sockaddr *)&addr);
+        sendto(sockfd, buf, sizeof(buf), 0,(struct sockaddr*)&addr, (socklen_t)addrlen);
         DEBUG_PRINT(udp_debug_mod, "Server sent custom UDP packet %d\n", i+1);
         usleep(2500);
     }
@@ -354,8 +358,9 @@ int main()
     
     // 開 thread
     pthread_create(&threads[0], NULL, tcp_socket, NULL);
-    pthread_create(&threads[1], NULL, tcp_ack,    NULL);
-    pthread_create(&threads[2], NULL, udp_socket, &timestampQ);
+    pthread_create(&threads[1], NULL, udp_socket, &timestampQ);
+    pthread_create(&threads[2], NULL, tcp_ack,    NULL);
+    
     pthread_create(&threads[3], NULL, udp_ack,    &timestampQ);
 
     // 等待所有 thread 結束

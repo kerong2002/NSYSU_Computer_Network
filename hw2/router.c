@@ -154,7 +154,7 @@ void *tcp_socket_client(void *argu){
     addr.sin_port = htons(ROUTER_PORT);
 
     if (bind(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        printf("bind error\n");
+        printf("tcp socket client bind error\n");
         pthread_exit(0);
     }
 
@@ -180,7 +180,7 @@ void *tcp_socket_client(void *argu){
         DEBUG_PRINT(tcp_debug_mod, "[TCP] Server received TCP packet #%02d\n", cnt+1);
         printf("TCP Packet from Client #%02d\n", cnt + 1);
         printf("   QueueLength       : %d\n", qlen);
-        printf("   Timestamp         : %ld.%06ld\n\n", now.tv_sec, now.tv_usec);
+        //printf("   Timestamp         : %ld.%06ld\n\n", now.tv_sec, now.tv_usec);
 
         cnt++;
     }
@@ -191,6 +191,7 @@ void *tcp_socket_client(void *argu){
 }
 
 void *tcp_socket_server(void *argu){
+    sleep(1);
     int sock_fd;
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
@@ -209,7 +210,7 @@ void *tcp_socket_server(void *argu){
     }
 
     if (connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        printf("connect error\n");
+        printf("tcp socket server => connect error\n");
         pthread_exit(0);
     }
 
@@ -280,7 +281,7 @@ void *tcp_ack_to_client(void *argu){
             tcp_ack_bool = false;
             DEBUG_PRINT(tcp_debug_mod, "[TCP] Server received TCP packet #%02d\n", cnt+1);
             printf("Send TCP ACK to Client #%02d\n", cnt + 1);
-            printf("   Status            : ACK sent\n\n");
+            //printf("   Status            : ACK sent\n\n");
             cnt++;
         }
         pthread_mutex_unlock(&tcp_ack_mutex);
@@ -320,7 +321,7 @@ void *tcp_ack_fr_server(void *argu){
         pthread_mutex_unlock(&tcp_ack_mutex);
 
         printf("Receive TCP ACK from Server #%02d\n", cnt + 1);
-        printf("   Status            : ACK received\n\n");
+        //printf("   Status            : ACK received\n\n");
         cnt++;
     }
 
@@ -482,9 +483,10 @@ int main() {
         
 	// 開 thread
 	pthread_create(&threads[0], NULL, tcp_socket_client, &tcpQ);
-	pthread_create(&threads[1], NULL, tcp_socket_server, &tcpQ); //g
-	pthread_create(&threads[2], NULL, udp_socket_client, &udpQ); //g
-	pthread_create(&threads[3], NULL, udp_socket_server, &udpQ);
+	pthread_create(&threads[1], NULL, udp_socket_server, &udpQ);
+	pthread_create(&threads[2], NULL, tcp_socket_server, &tcpQ); //g
+	pthread_create(&threads[3], NULL, udp_socket_client, &udpQ); //g
+	
 	pthread_create(&threads[4], NULL, tcp_ack_fr_server, NULL);
 	pthread_create(&threads[5], NULL, tcp_ack_to_client, NULL);
 	pthread_create(&threads[6], NULL, udp_ack_to_server, NULL);
